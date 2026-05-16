@@ -1,0 +1,40 @@
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Environment
+.env
+!backend/.env.example
+
+# Database
+*.db
+*.sqlite3
+
+# SSL certs
+nginx/ssl/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Uploads
+backend/uploads/*
+!backend/uploads/.gitkeep

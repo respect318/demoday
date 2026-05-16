@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: villainui-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - villain_data:/app/villain
+      - db_data:/app/data
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    networks:
+      - villainnet
+    privileged: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: villainui-frontend
+    restart: unless-stopped
+    networks:
+      - villainnet
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: villainui-nginx
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ssl_data:/etc/nginx/ssl
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - villainnet
+
+volumes:
+  villain_data:
+  db_data:
+  uploads:
+  ssl_data:
+
+networks:
+  villainnet:
+    driver: bridge
