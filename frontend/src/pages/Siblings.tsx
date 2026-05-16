@@ -16,6 +16,8 @@ export default function Siblings() {
   const [ip, setIp] = useState('');
   const [port, setPort] = useState(6501);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const refresh = async () => {
     try {
@@ -31,11 +33,16 @@ export default function Siblings() {
   const handleConnect = async () => {
     if (!ip) return;
     setLoading(true);
+    setError('');
+    setSuccess('');
     try {
-      await api.post('/siblings/connect', { ip_address: ip, port });
+      await api.post('/siblings/connect', { host: ip, port });
+      setSuccess(`Connect command sent to ${ip}:${port}`);
       setIp('');
       refresh();
-    } catch (err) {
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Connect failed';
+      setError(msg);
       console.error('Connect failed:', err);
     } finally {
       setLoading(false);
@@ -44,9 +51,12 @@ export default function Siblings() {
 
   const handleDisconnect = async (siblingId: string) => {
     try {
-      await api.post(`/siblings/${siblingId}/disconnect`);
+      await api.delete(`/siblings/${siblingId}`);
+      setSuccess('Sibling disconnected');
       refresh();
-    } catch (err) {
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Disconnect failed';
+      setError(msg);
       console.error('Disconnect failed:', err);
     }
   };
@@ -78,6 +88,8 @@ export default function Siblings() {
               {loading ? 'Connecting...' : 'Connect'}
             </button>
           </div>
+          {error && <p className="text-danger text-sm mt-3">{error}</p>}
+          {success && <p className="text-accent-green text-sm mt-3">{success}</p>}
         </div>
 
         <div className="card">

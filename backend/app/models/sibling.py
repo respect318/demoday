@@ -7,6 +7,8 @@ class SiblingInfo(BaseModel):
     hostname: str
     ip_address: str
     port: int
+    status: str = "pending"
+    connected_at: str = ""
     session_count: int = 0
 
 
