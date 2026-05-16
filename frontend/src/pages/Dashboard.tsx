@@ -65,6 +65,16 @@ export default function Dashboard() {
     }
   };
 
+  const seedDemo = async () => {
+    try {
+      await api.post('/sessions/demo/seed');
+      const { data } = await api.get('/sessions');
+      data.forEach((s: any) => addSession(s));
+    } catch (err) {
+      console.error('Seed demo error:', err);
+    }
+  };
+
   const statCards = [
     { label: 'Active Sessions', value: sessions.filter((s) => s.alive).length, icon: Activity, color: 'text-accent-green' },
     { label: 'Siblings', value: stats.siblings, icon: Users, color: 'text-accent-purple' },
@@ -90,23 +100,31 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <button
-            onClick={toggleDaemon}
-            disabled={daemonStatus === 'loading'}
-            className={`flex items-center gap-2 px-5 py-3 rounded-lg font-semibold transition-all ${
-              daemonStatus === 'running'
-                ? 'bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20'
-                : 'btn-primary'
-            }`}
-          >
-            {daemonStatus === 'running' ? (
-              <><Square className="w-4 h-4" /> Stop Daemon</>
-            ) : daemonStatus === 'loading' ? (
-              'Starting...'
-            ) : (
-              <><Play className="w-4 h-4" /> Start Daemon</>
-            )}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={seedDemo}
+              className="flex items-center gap-2 px-4 py-3 rounded-lg font-semibold bg-accent-purple/10 text-accent-purple border border-accent-purple/30 hover:bg-accent-purple/20 transition-all"
+            >
+              <Activity className="w-4 h-4" /> Demo Sessions
+            </button>
+            <button
+              onClick={toggleDaemon}
+              disabled={daemonStatus === 'loading'}
+              className={`flex items-center gap-2 px-5 py-3 rounded-lg font-semibold transition-all ${
+                daemonStatus === 'running'
+                  ? 'bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20'
+                  : 'btn-primary'
+              }`}
+            >
+              {daemonStatus === 'running' ? (
+                <><Square className="w-4 h-4" /> Stop Daemon</>
+              ) : daemonStatus === 'loading' ? (
+                'Starting...'
+              ) : (
+                <><Play className="w-4 h-4" /> Start Daemon</>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-6">

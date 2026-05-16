@@ -141,3 +141,21 @@ async def conpty_shell(
     if not success:
         raise HTTPException(status_code=400, detail="ConPtyShell only available for Windows sessions")
     return {"message": "ConPtyShell triggered"}
+
+
+@router.post("/demo/seed")
+async def seed_demo_sessions(current_user: User = Depends(get_current_user)):
+    """Seed fake sessions for demo/presentation purposes."""
+    import uuid
+    demos = [
+        {"ip": "192.168.1.105", "os": "windows", "shell": "hoaxshell", "alias": "DC-01"},
+        {"ip": "10.0.0.42", "os": "linux", "shell": "tcp", "alias": "web-srv"},
+        {"ip": "172.16.0.88", "os": "windows", "shell": "tcp", "alias": "HR-PC"},
+    ]
+    created = []
+    for d in demos:
+        sid = str(uuid.uuid4())[:8]
+        s = session_manager.add_session(sid, d["ip"], d["os"], d["shell"])
+        session_manager.set_alias(sid, d["alias"])
+        created.append(s)
+    return {"message": f"{len(created)} demo sessions created", "sessions": created}

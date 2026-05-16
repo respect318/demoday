@@ -2,7 +2,7 @@ import os
 import sys
 import asyncio
 import subprocess
-import signal
+import threading
 from typing import Optional
 from collections import deque
 
@@ -18,22 +18,23 @@ IS_WINDOWS = sys.platform == "win32"
 class VillainBridge:
     """
     Core bridge that launches the Villain C2 framework as a subprocess,
-    captures stdout/stderr asynchronously, relays output to WebSocket clients,
-    and writes commands from the browser terminal to Villain's stdin.
+    captures stdout/stderr via threads (Windows compatible), relays output
+    to WebSocket clients, and writes commands to Villain's stdin.
     """
 
     def __init__(self):
-        self._process: Optional[asyncio.subprocess.Process] = None
+        self._process: Optional[subprocess.Popen] = None
         self._running: bool = False
         self._log_buffer: deque = deque(maxlen=2000)
         self._output_callbacks = []
         self._event_callbacks = []
-        self._reader_task: Optional[asyncio.Task] = None
-        self._stderr_task: Optional[asyncio.Task] = None
+        self._stdout_thread: Optional[threading.Thread] = None
+        self._stderr_thread: Optional[threading.Thread] = None
+        self._loop = None
 
     @property
     def running(self) -> bool:
-        return self._running and self._process is not None and self._process.returncode is None
+        return self._running and self._process is not None and self._process.poll() is None
 
     @property
     def pid(self) -> Optional[int]:
@@ -71,10 +72,16 @@ class VillainBridge:
             except Exception as e:
                 logger.error(f"Event callback error: {e}")
 
+    def _schedule_async(self, coro):
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
+
     async def start(self) -> bool:
         if self.running:
             logger.warning("Villain is already running")
             return False
+
+        self._loop = asyncio.get_event_loop()
 
         villain_path = settings.VILLAIN_PATH
         villain_main = os.path.join(villain_path, "Villain.py")
@@ -101,26 +108,26 @@ class VillainBridge:
             logger.info(f"Starting Villain: {' '.join(cmd)}")
             self._log_buffer.append(f"[INFO] Starting Villain daemon...")
 
-            if IS_WINDOWS:
-                self._process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=villain_path,
-                )
-            else:
-                self._process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=villain_path,
-                )
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+
+            self._process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=villain_path,
+                env=env,
+                bufsize=1,
+            )
 
             self._running = True
-            self._reader_task = asyncio.create_task(self._read_stdout())
-            self._stderr_task = asyncio.create_task(self._read_stderr())
+
+            self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
+            self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
+            self._stdout_thread.start()
+            self._stderr_thread.start()
 
             logger.info(f"Villain started with PID {self._process.pid}")
             self._log_buffer.append(f"[INFO] Villain started (PID: {self._process.pid})")
@@ -129,7 +136,9 @@ class VillainBridge:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to start Villain: {e}")
+            import traceback
+            tb = traceback.format_exc()
+            logger.error(f"Failed to start Villain: {e}\n{tb}")
             self._log_buffer.append(f"[ERROR] Failed to start Villain: {e}")
             await self._notify_output(f"[ERROR] Failed to start Villain: {e}\n")
             self._running = False
@@ -146,24 +155,19 @@ class VillainBridge:
             if self._process:
                 try:
                     self._process.stdin.write(b"exit\n")
-                    await self._process.stdin.drain()
+                    self._process.stdin.flush()
                 except Exception:
                     pass
 
-                await asyncio.sleep(1)
-
-                if self._process.returncode is None:
+                try:
+                    self._process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
                     self._process.terminate()
                     try:
-                        await asyncio.wait_for(self._process.wait(), timeout=5)
-                    except asyncio.TimeoutError:
+                        self._process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
                         self._process.kill()
-                        await self._process.wait()
-
-            if self._reader_task:
-                self._reader_task.cancel()
-            if self._stderr_task:
-                self._stderr_task.cancel()
+                        self._process.wait()
 
             logger.info("Villain stopped")
             self._log_buffer.append("[INFO] Villain daemon stopped")
@@ -185,59 +189,53 @@ class VillainBridge:
         try:
             cmd_bytes = (command + "\n").encode()
             self._process.stdin.write(cmd_bytes)
-            await self._process.stdin.drain()
+            self._process.stdin.flush()
             self._log_buffer.append(f">>> {command}")
             return True
         except Exception as e:
             logger.error(f"Error sending command: {e}")
             return False
 
-    async def _read_stdout(self):
+    def _read_stdout(self):
         try:
             while self._running and self._process and self._process.stdout:
-                line_bytes = await self._process.stdout.readline()
+                line_bytes = self._process.stdout.readline()
                 if not line_bytes:
-                    if self._process.returncode is not None:
+                    if self._process.poll() is not None:
                         break
-                    await asyncio.sleep(0.1)
                     continue
 
                 line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
                 self._log_buffer.append(line)
-                await self._notify_output(line + "\n")
+                self._schedule_async(self._notify_output(line + "\n"))
 
                 event = session_manager.parse_line(line)
                 if event:
-                    await self._notify_event(event)
-                    await self._notify_output(f"[EVENT] {event['type']}: {event['data']}\n")
+                    self._schedule_async(self._notify_event(event))
+                    self._schedule_async(self._notify_output(f"[EVENT] {event['type']}: {event['data']}\n"))
 
-        except asyncio.CancelledError:
-            pass
         except Exception as e:
             logger.error(f"stdout reader error: {e}")
         finally:
             if self._running:
                 self._running = False
                 self._log_buffer.append("[WARN] Villain process exited unexpectedly")
-                await self._notify_output("[WARN] Villain process exited unexpectedly\n")
-                await self._notify_event({"type": "daemon_status", "data": {"status": "crashed", "pid": None}})
+                self._schedule_async(self._notify_output("[WARN] Villain process exited unexpectedly\n"))
+                self._schedule_async(self._notify_event({"type": "daemon_status", "data": {"status": "crashed", "pid": None}}))
 
-    async def _read_stderr(self):
+    def _read_stderr(self):
         try:
             while self._running and self._process and self._process.stderr:
-                line_bytes = await self._process.stderr.readline()
+                line_bytes = self._process.stderr.readline()
                 if not line_bytes:
-                    if self._process.returncode is not None:
+                    if self._process.poll() is not None:
                         break
-                    await asyncio.sleep(0.1)
                     continue
 
                 line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
                 self._log_buffer.append(f"[STDERR] {line}")
-                await self._notify_output(f"[STDERR] {line}\n")
+                self._schedule_async(self._notify_output(f"[STDERR] {line}\n"))
 
-        except asyncio.CancelledError:
-            pass
         except Exception as e:
             logger.error(f"stderr reader error: {e}")
 

@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/villainui.db"
-    VILLAIN_PATH: str = str(_BACKEND_ROOT / "villain")
-    UPLOAD_DIR: str = str(_BACKEND_ROOT / "uploads")
+    VILLAIN_PATH: str = ""
+    UPLOAD_DIR: str = ""
     TCP_PORT: int = 6501
     HOAXSHELL_PORT: int = 8080
     NETCAT_PORT: int = 4443
@@ -28,6 +28,13 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Auto-detect paths if not set or if Docker path used on local machine
+if not settings.VILLAIN_PATH or not Path(settings.VILLAIN_PATH).exists():
+    settings.VILLAIN_PATH = str(_BACKEND_ROOT / "villain")
+
+if not settings.UPLOAD_DIR or not Path(settings.UPLOAD_DIR).exists():
+    settings.UPLOAD_DIR = str(_BACKEND_ROOT / "uploads")
 
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 data_dir = Path(settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")).parent
